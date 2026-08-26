@@ -29,6 +29,12 @@ schema:
   default_timezone: str?
   # Optional proxy — leave empty for direct connection. Format: http://user:pass@host:port
   proxy_url: password?
+  # Public URL the addon is reachable at. Used by Steel to build correct
+  # session/debug/devtools links in the UI (otherwise Steel falls back to
+  # 0.0.0.0:3000 which is unreachable from a browser). Format: http(s)://host:port
+  # Examples: http://homeassistant.local:3000, http://192.168.1.10:3000
+  # Leave empty to let Steel auto-detect from request Host header.
+  host_url: str?
 options:
   steel_port: 3000
   steel_api_key: ""
@@ -41,6 +47,7 @@ options:
   skip_fingerprint_injection: false
   default_timezone: ""
   proxy_url: ""
+  host_url: ""
 ports:
   3000/tcp: 3000
   9223/tcp: 9223

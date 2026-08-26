@@ -83,6 +83,12 @@ DATA_PATH="$(_bashio_config 'data_path' '/share/steel')"
 SKIP_FINGERPRINT_INJECTION="$(_bashio_config 'skip_fingerprint_injection' 'false')"
 DEFAULT_TIMEZONE="$(_bashio_config 'default_timezone' '')"
 PROXY_URL="$(_bashio_config 'proxy_url' '')"
+# Public host Steel should embed in self-generated URLs (UI links,
+# debugUrl, devtoolsInspectorUrl). If empty, Steel will use the
+# request's Host header (which works behind HA's host networking but
+# breaks for direct browser access). Set this in the HA Configuration
+# tab to the URL you actually open in your browser.
+HOST_URL="$(_bashio_config 'host_url' '')"
 
 # ---- Prepare persistent dirs ----
 # Steel writes browser profile state (cookies, localStorage, IndexedDB)
@@ -100,7 +106,13 @@ echo "[10-config] data dir ready: $(ls -ld ${DATA_PATH})"
 # Map addon option names to Steel's expected env var names (see steel's
 # .env.example). All are env-var-driven; no config files to template.
 export PORT="${STEEL_PORT}"
-export HOST=0.0.0.0
+# Only export HOST if user set host_url — otherwise leave it unset so
+# Steel falls back to req.hostname from the incoming HTTP request.
+# (Setting HOST=0.0.0.0 makes Steel embed "0.0.0.0:3000" in every
+# self-generated UI link, which is unreachable from a real browser.)
+if [ -n "${HOST_URL}" ]; then
+    export HOST="${HOST_URL}"
+fi
 export CDP_REDIRECT_PORT="${STEEL_PORT_CDP:-9223}"
 export NODE_ENV=production
 export CHROME_HEADLESS
@@ -130,7 +142,7 @@ fi
 {
     echo "DATA_PATH=${DATA_PATH}"
     echo "PORT=${PORT}"
-    echo "HOST=${HOST}"
+    echo "HOST=${HOST:-<unset — falls back to req.hostname>}"
     echo "CDP_REDIRECT_PORT=${CDP_REDIRECT_PORT}"
     echo "LOG_LEVEL=${LOG_LEVEL}"
     echo "CHROME_HEADLESS=${CHROME_HEADLESS}"
@@ -150,7 +162,7 @@ chmod 600 "${DATA_PATH}/logs/options.env"
 _ENV_TMP="/tmp/.steel-env"
 {
     echo "export PORT='${PORT}'"
-    echo "export HOST='${HOST}'"
+    [ -n "${HOST_URL:-}" ] && echo "export HOST='${HOST_URL}'"
     echo "export CDP_REDIRECT_PORT='${CDP_REDIRECT_PORT}'"
     echo "export NODE_ENV='${NODE_ENV}'"
     echo "export CHROME_HEADLESS='${CHROME_HEADLESS}'"
