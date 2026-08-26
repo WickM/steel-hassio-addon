@@ -50,6 +50,31 @@ export PORT HOST CDP_REDIRECT_PORT LOG_LEVEL STEEL_DATA_PATH CHROME_HEADLESS NOD
 # Ensure data dirs exist (cont-init should have done this already; defensive)
 mkdir -p "${STEEL_DATA_PATH}/profiles" "${STEEL_DATA_PATH}/sessions" "${STEEL_DATA_PATH}/logs"
 
+# ---- Steel upstream cwd ----
+# Steel's upstream image sets WORKDIR=/app and its entrypoint.sh runs
+# `exec node ./api/build/index.js` with a RELATIVE path. s6-overlay's
+# legacy-service runs us with CWD=/run/s6/legacy-services/steel/, so
+# node would fail with "Cannot find module '/run/s6/.../api/build/index.js'".
+# Fix: cd to /app before exec'ing the upstream entrypoint.
+cd /app
+
+# ---- Defensive nginx cleanup ----
+# Steel's entrypoint.sh starts nginx in the background before launching node.
+# If node crashes (wrong cwd, missing dep), entrypoint exits but nginx keeps
+# running on port 9223. Next s6 restart then fails with
+# `bind() to 0.0.0.0:9223 failed (98: Address already in use)`.
+# Kill any leftover nginx master so the fresh entrypoint can bind cleanly.
+if [ -f /var/run/nginx.pid ]; then
+    echo "[run.sh] defensive: killing stale nginx (pid=$(cat /var/run/nginx.pid))"
+    kill "$(cat /var/run/nginx.pid)" 2>/dev/null || true
+    sleep 1
+    rm -f /var/run/nginx.pid
+fi
+# Also nuke anything else still holding 9223 (paranoid).
+if command -v fuser >/dev/null 2>&1; then
+    fuser -k 9223/tcp 2>/dev/null || true
+fi
+
 # ---- Launch ----
 # Steel's upstream CMD is `node ./api/build/server.js` (or whatever the
 # image's CMD is set to). s6-overlay's `run` service execs us, we exec CMD.
