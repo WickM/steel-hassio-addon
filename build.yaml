@@ -1,0 +1,4 @@
+build:
+  from:
+    aarch64: ghcr.io/steel-dev/steel-browser:latest
+    amd64: ghcr.io/steel-dev/steel-browser:latest

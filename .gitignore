@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+*.env
+*.key
+*.pem
+secrets.yaml
+options.json
+data/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artefacts
+build/
+dist/
+*.tar
+*.tar.gz
+node_modules/
+
+# Test data
+test-data/

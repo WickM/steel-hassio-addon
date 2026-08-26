@@ -1,0 +1,50 @@
+name: Steel Browser
+version: "0.1.0"
+slug: steel_browser
+description: Steel — open-source browser API for AI agents. Persistent profiles, session management, anti-bot stealth. Sidecar for OpenClaw.
+url: https://github.com/WickM/steel-hassio-addon
+webui: "[PROTO:http]://[HOST]:[PORT:3000]/ui"
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: services
+map:
+  - share:rw
+backup: hot
+backup_exclude:
+  - "**/logs"
+  - "**/cache"
+  - "**/.cache"
+schema:
+  # Steel runtime configuration — see steel-dev/steel-browser repo for full list
+  steel_port: int
+  steel_api_key: password?
+  chrome_headless: bool
+  chrome_args: str?
+  log_level: str
+  data_path: str
+  # Anti-bot toggles — all default off; enable as needed.
+  skip_fingerprint_injection: bool
+  default_timezone: str?
+  # Optional proxy — leave empty for direct connection. Format: http://user:pass@host:port
+  proxy_url: password?
+options:
+  steel_port: 3000
+  steel_api_key: ""
+  chrome_headless: true
+  # Default Chrome args: no-sandbox required in container, plus common headless stability flags.
+  # Users can override in the HA Configuration tab; comma-separated gets joined to one line.
+  chrome_args: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu,--disable-setuid-sandbox"
+  log_level: warn
+  data_path: /share/steel
+  skip_fingerprint_injection: false
+  default_timezone: ""
+  proxy_url: ""
+ports:
+  3000/tcp: 3000
+  9223/tcp: 9223
+ports_description:
+  3000/tcp: Steel API + Web UI
+  9223/tcp: Chrome DevTools Protocol (CDP) debugger
+image: ghcr.io/wickm/steel-hassio-addon

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# s6-overlay service: Steel API + browser process.
+# Runs in foreground under s6 supervision. Restart strategy: default
+# (restart on non-zero exit).
+set -e
+
+# Source the env file written by /etc/cont-init.d/10-config.
+# s6-overlay runs cont-init and the service as separate process trees,
+# so `export` from cont-init never reaches us — must re-source.
+if [ -f /tmp/.steel-env ]; then
+    set -a
+    . /tmp/.steel-env
+    set +a
+fi
+
+# Diagnostics on every restart
+echo "[steel/run] uid=$(id -u) cwd=$(pwd)"
+echo "[steel/run] node: $(command -v node || echo 'NOT FOUND')"
+echo "[steel/run] PORT=${PORT:-3000} CDP_REDIRECT_PORT=${CDP_REDIRECT_PORT:-9223}"
+echo "[steel/run] data dir: ${STEEL_DATA_PATH:-/share/steel}"
+
+exec /run.sh

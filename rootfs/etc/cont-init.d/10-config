@@ -1,0 +1,170 @@
+#!/usr/bin/bashio
+# s6-overlay cont-init.d/10-config — runs once at boot, before services.
+# Validates addon options, prepares persistent data dirs, exports env.
+# Tolerant: log + non-zero exit only on fatal misconfig.
+set +e
+
+echo "[10-config] uid=$(id -u) cwd=$(pwd)"
+if declare -F bashio::config >/dev/null 2>&1; then
+    echo "[10-config] bashio loaded: OK"
+else
+    echo "[10-config] bashio NOT loaded — falling back to jq"
+fi
+
+OPTIONS_FILE="/data/options.json"
+
+# Same bashio/jq fallback pattern as cognee-addon (v0.1.3 lesson):
+# bashio can be loaded (function exists) but every call to the Supervisor
+# API returns 403 forbidden (e.g. sideloaded image, missing supervisor
+# token). In that case bashio silently returns the default even though
+# /data/options.json is mounted with real values.
+_USE_JQ_FLAG="/tmp/.steel-use-jq"
+rm -f "${_USE_JQ_FLAG}"
+
+_bashio_config() {
+    local key="$1"
+    local default="$2"
+
+    if [ -f "${_USE_JQ_FLAG}" ]; then
+        if [ -f "${OPTIONS_FILE}" ]; then
+            local val
+            val="$(jq -r --arg k "${key}" 'if (.[$k] == null) then empty else .[$k] end' "${OPTIONS_FILE}" 2>/dev/null)"
+            if [ -n "${val}" ]; then echo "${val}"; return; fi
+        fi
+        echo "${default}"
+        return
+    fi
+
+    if declare -F bashio::config >/dev/null 2>&1; then
+        local bashio_val
+        bashio_val="$(bashio::config "${key}" "${default}" 2>/dev/null)"
+        # Probe: for steel_api_key, if bashio returned empty but jq finds a
+        # value, latch jq mode.
+        if [ "${key}" = "steel_api_key" ] && [ -z "${bashio_val}" ] && [ -f "${OPTIONS_FILE}" ]; then
+            local jq_val
+            jq_val="$(jq -r --arg k "${key}" 'if (.[$k] == null) then empty else .[$k] end' "${OPTIONS_FILE}" 2>/dev/null)"
+            if [ -n "${jq_val}" ]; then
+                echo "[10-config] bashio returned empty for ${key} but options.json has value — switching to jq fallback" >&2
+                touch "${_USE_JQ_FLAG}"
+                echo "${jq_val}"
+                return
+            fi
+        fi
+        if [ -z "${bashio_val}" ] && [ -n "${default}" ]; then
+            bashio_val="${default}"
+        fi
+        echo "${bashio_val}"
+        return
+    fi
+
+    if [ -f "${OPTIONS_FILE}" ]; then
+        local val
+        val="$(jq -r --arg k "${key}" 'if (.[$k] == null) then empty else .[$k] end' "${OPTIONS_FILE}" 2>/dev/null)"
+        if [ -z "${val}" ]; then echo "${default}"; else echo "${val}"; fi
+    else
+        echo "${default}"
+    fi
+}
+
+# ---- Read options ----
+STEEL_PORT="$(_bashio_config 'steel_port' '3000')"
+STEEL_API_KEY="$(_bashio_config 'steel_api_key' '')"
+CHROME_HEADLESS="$(_bashio_config 'chrome_headless' 'true')"
+# CHROME_ARGS comes in as a comma-separated string. We replace commas with
+# spaces for env var consumption. If empty, leave unset.
+CHROME_ARGS_RAW="$(_bashio_config 'chrome_args' '--no-sandbox,--disable-dev-shm-usage')"
+if [ -n "${CHROME_ARGS_RAW}" ]; then
+    CHROME_ARGS="$(echo "${CHROME_ARGS_RAW}" | tr ',' ' ')"
+else
+    unset CHROME_ARGS
+fi
+LOG_LEVEL="$(_bashio_config 'log_level' 'warn')"
+DATA_PATH="$(_bashio_config 'data_path' '/share/steel')"
+SKIP_FINGERPRINT_INJECTION="$(_bashio_config 'skip_fingerprint_injection' 'false')"
+DEFAULT_TIMEZONE="$(_bashio_config 'default_timezone' '')"
+PROXY_URL="$(_bashio_config 'proxy_url' '')"
+
+# ---- Prepare persistent dirs ----
+# Steel writes browser profile state (cookies, localStorage, IndexedDB)
+# under its data root. We mount /share/steel via map: share:rw so this
+# survives container restarts and addon updates.
+mkdir -p "${DATA_PATH}" \
+         "${DATA_PATH}/profiles" \
+         "${DATA_PATH}/sessions" \
+         "${DATA_PATH}/logs" \
+         "${DATA_PATH}/cache"
+chmod -R 777 "${DATA_PATH}"
+echo "[10-config] data dir ready: $(ls -ld ${DATA_PATH})"
+
+# ---- Export ----
+# Map addon option names to Steel's expected env var names (see steel's
+# .env.example). All are env-var-driven; no config files to template.
+export PORT="${STEEL_PORT}"
+export HOST=0.0.0.0
+export CDP_REDIRECT_PORT="${STEEL_PORT_CDP:-9223}"
+export NODE_ENV=production
+export CHROME_HEADLESS
+if [ -n "${CHROME_ARGS:-}" ]; then
+    export CHROME_ARGS
+fi
+export LOG_LEVEL
+export STEEL_DATA_PATH="${DATA_PATH}"
+export SKIP_FINGERPRINT_INJECTION
+if [ -n "${DEFAULT_TIMEZONE}" ]; then
+    export DEFAULT_TIMEZONE
+fi
+if [ -n "${PROXY_URL}" ]; then
+    export PROXY_URL
+fi
+
+# Optional API key (if user set one in HA UI for extra protection).
+# Steel self-hosted doesn't require it; only needed if you want to lock
+# down the API endpoint. Note: as of steel-browser 2026-08, API-key
+# enforcement is experimental — see docs.steel.dev/api-reference.
+if [ -n "${STEEL_API_KEY}" ]; then
+    export STEEL_API_KEY
+    export AUTH_ENABLED=true
+fi
+
+# Write a summary (no secrets) for post-mortem debugging
+{
+    echo "DATA_PATH=${DATA_PATH}"
+    echo "PORT=${PORT}"
+    echo "HOST=${HOST}"
+    echo "CDP_REDIRECT_PORT=${CDP_REDIRECT_PORT}"
+    echo "LOG_LEVEL=${LOG_LEVEL}"
+    echo "CHROME_HEADLESS=${CHROME_HEADLESS}"
+    echo "CHROME_ARGS=${CHROME_ARGS:-<unset>}"
+    echo "STEEL_DATA_PATH=${STEEL_DATA_PATH}"
+    echo "SKIP_FINGERPRINT_INJECTION=${SKIP_FINGERPRINT_INJECTION}"
+    echo "DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-<unset>}"
+    echo "PROXY_URL=${PROXY_URL:+<set>}${PROXY_URL:-<unset>}"
+    echo "STEEL_API_KEY=${STEEL_API_KEY:+<set>}${STEEL_API_KEY:-<unset>}"
+    echo "NODE_ENV=${NODE_ENV}"
+} > "${DATA_PATH}/logs/options.env"
+chmod 600 "${DATA_PATH}/logs/options.env"
+
+# Persist exports to /tmp/.steel-env so the s6 service run script can
+# re-source them (s6-overlay runs cont-init and service as separate
+# process trees — exports don't propagate).
+_ENV_TMP="/tmp/.steel-env"
+{
+    echo "export PORT='${PORT}'"
+    echo "export HOST='${HOST}'"
+    echo "export CDP_REDIRECT_PORT='${CDP_REDIRECT_PORT}'"
+    echo "export NODE_ENV='${NODE_ENV}'"
+    echo "export CHROME_HEADLESS='${CHROME_HEADLESS}'"
+    [ -n "${CHROME_ARGS:-}" ] && echo "export CHROME_ARGS='${CHROME_ARGS}'"
+    echo "export LOG_LEVEL='${LOG_LEVEL}'"
+    echo "export STEEL_DATA_PATH='${STEEL_DATA_PATH}'"
+    echo "export SKIP_FINGERPRINT_INJECTION='${SKIP_FINGERPRINT_INJECTION}'"
+    [ -n "${DEFAULT_TIMEZONE:-}" ] && echo "export DEFAULT_TIMEZONE='${DEFAULT_TIMEZONE}'"
+    [ -n "${PROXY_URL:-}" ] && echo "export PROXY_URL='${PROXY_URL}'"
+    [ -n "${STEEL_API_KEY:-}" ] && echo "export STEEL_API_KEY='${STEEL_API_KEY}'"
+    [ -n "${STEEL_API_KEY:-}" ] && echo "export AUTH_ENABLED=true"
+} > "${_ENV_TMP}"
+chmod 600 "${_ENV_TMP}"
+
+echo "[10-config] options written to ${DATA_PATH}/logs/options.env"
+echo "[10-config] env file: ${_ENV_TMP}"
+echo "[10-config] OK — handing off to steel service"

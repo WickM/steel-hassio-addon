@@ -1,0 +1,6 @@
+{
+  "name": "Steel Browser Add-on Repository",
+  "version": "0.1.0",
+  "slug": "steel_browser",
+  "description": "Steel Browser API as a Home Assistant add-on. Persistent profiles for Kaggle, Bring!, Notion etc. Apache-2.0."
+}

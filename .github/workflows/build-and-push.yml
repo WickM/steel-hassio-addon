@@ -1,0 +1,79 @@
+name: Build and Push Steel Browser Add-on Image
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Serialize concurrent runs to avoid hammering GitHub's runner pool.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    # ubuntu-22.04 is an explicit pinned image; on GitHub's free tier the
+    # 'latest' label is sometimes starved for hosted runners — pinning a
+    # specific image pulls from a different pool allocation.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install yq (for config.yaml version extraction)
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Extract version from config.yaml
+        id: version
+        run: |
+          VERSION=$(yq '.version' config.yaml)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Arch=${{ matrix.arch }}"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: |
+            ghcr.io/wickm/steel-hassio-addon:${{ steps.version.outputs.version }}
+            ghcr.io/wickm/steel-hassio-addon:latest
+          build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            BUILD_DESCRIPTION="Steel Browser API — open-source browser for AI agents (hassio add-on)"
+            BUILD_NAME="Steel Browser"
+            BUILD_REF=${{ github.sha }}
+            BUILD_REPOSITORY=WickM/steel-hassio-addon
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
