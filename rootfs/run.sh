@@ -70,13 +70,29 @@ if [ -n "${CMD_OVERRIDE:-}" ]; then
     exec ${CMD_OVERRIDE}
 fi
 
-# Fallback: if CMD inheritance somehow broke (rare), fall back to a sane default.
-# Steel's image CMD is typically `node ./api/build/server.js`.
-if [ -f /app/api/build/server.js ]; then
-    echo "[run.sh] exec node /app/api/build/server.js"
-    exec node /app/api/build/server.js
+# Fallback: if CMD inheritance somehow broke (rare), exec Steel's actual
+# upstream entrypoint. Per steel-dev/steel-browser Dockerfile (2026-08):
+#   ENTRYPOINT ["/app/api/entrypoint.sh"]
+# which in turn runs `exec node ./api/build/index.js`. The entrypoint.sh
+# handles DBus init, nginx (optional), Chrome verification, then starts
+# the node process — so we want to call IT, not bypass it.
+if [ -x /app/api/entrypoint.sh ]; then
+    echo "[run.sh] exec /app/api/entrypoint.sh (steel upstream entrypoint)"
+    exec /app/api/entrypoint.sh
 fi
 
-# Last resort: run whatever is at $1 or fall back to bash
-echo "[run.sh] WARNING: no known steel entrypoint found, falling back to bash"
-exec bash
+# Last resort: try the actual node server file (steel-browser 2026-08
+# layout: /app/api/build/index.js, NOT server.js as I initially assumed)
+if [ -f /app/api/build/index.js ]; then
+    echo "[run.sh] exec node /app/api/build/index.js"
+    exec node /app/api/build/index.js
+fi
+
+# Truly nothing matched — log loudly and exit so s6-overlay marks us failed
+# (better than silently falling back to bash which would loop forever).
+echo "[run.sh] FATAL: no known steel entrypoint found"
+echo "[run.sh] /app/api/entrypoint.sh exists? $(test -x /app/api/entrypoint.sh && echo yes || echo no)"
+echo "[run.sh] /app/api/build/index.js exists? $(test -f /app/api/build/index.js && echo yes || echo no)"
+echo "[run.sh] /app/api/build contents:"
+ls -la /app/api/build/ 2>/dev/null || echo "  (cannot list /app/api/build)"
+exit 1
