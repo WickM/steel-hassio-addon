@@ -11,6 +11,19 @@ else
     echo "[10-config] bashio NOT loaded — falling back to jq"
 fi
 
+# DEBUG v0.1.4: show what we can actually read. Tells us whether bashio is
+# silent-empty (403 from supervisor API) or whether /data/options.json is
+# missing/empty.
+if [ -f "${OPTIONS_FILE}" ]; then
+    echo "[10-config] DEBUG options.json present, size=$(stat -c%s "${OPTIONS_FILE}") bytes"
+    echo "[10-config] DEBUG raw host_url field: $(jq -r '.host_url // \"<missing>\"' "${OPTIONS_FILE}")"
+else
+    echo "[10-config] DEBUG options.json MISSING at ${OPTIONS_FILE}"
+fi
+if declare -F bashio::config >/dev/null 2>&1; then
+    echo "[10-config] DEBUG bashio host_url probe: '$(bashio::config 'host_url' '<bashio-empty>' 2>&1)'"
+fi
+
 OPTIONS_FILE="/data/options.json"
 
 # Same bashio/jq fallback pattern as cognee-addon (v0.1.3 lesson):
@@ -179,4 +192,6 @@ chmod 600 "${_ENV_TMP}"
 
 echo "[10-config] options written to ${DATA_PATH}/logs/options.env"
 echo "[10-config] env file: ${_ENV_TMP}"
+# DEBUG v0.1.4: show what was actually exported (post-fix state).
+echo "[10-config] DEBUG exported HOST='${HOST:-<unset>}' HOST_URL='${HOST_URL:-<unset>}'"
 echo "[10-config] OK — handing off to steel service"
