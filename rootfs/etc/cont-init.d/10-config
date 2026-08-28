@@ -10,6 +10,8 @@
 # misconfig still fails the container instead of silently starting
 # with defaults.
 set +eu
+OPTIONS_FILE="/data/options.json"   # must be defined before any reference (bashio sets -u)
+
 # (don't add anything here that uses unset variables — assign first.)
 
 echo "[10-config] uid=$(id -u) cwd=$(pwd)"
