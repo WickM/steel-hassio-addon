@@ -1,5 +1,5 @@
 name: Steel Browser
-version: "0.1.8"
+version: "0.1.9"
 slug: steel_browser
 description: Steel — open-source browser API for AI agents. Persistent profiles, session management, anti-bot stealth. Sidecar for OpenClaw.
 url: https://github.com/WickM/steel-hassio-addon

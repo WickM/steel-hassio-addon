@@ -94,7 +94,7 @@ fi
 # Display host as <auto> when not explicitly set, so logs make clear
 # Steel will auto-detect from req.hostname.
 _DISPLAY_HOST="${HOST:-<auto-detect-from-request>}"
-if [ -n "${HOST}" ]; then
+if [ -n "${HOST:-}" ]; then
     _DISPLAY_HOST="${HOST}"
 fi
 if declare -F bashio::log.blue >/dev/null 2>&1; then

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.9 — 2026-08-28
+
+### Fixes
+- **Container crash (`/run.sh: line 97: HOST: unbound variable`):** Line 97 of `rootfs/run.sh` referenced `${HOST}` without a default, which crashes under `set -u` (active because bashio's shebang enables it). Fixed by using `${HOST:-}` consistently — the conditional export on line 76 already used it correctly, but the late display-host check on line 97 didn't. One-character fix, completes the v0.1.5/v0.1.6 `set +eu` work — that fix let the script start, but this line still tripped on `set -u` later.
+
+## 0.1.8 — 2026-08-28
+
+### Fixes
+- **UI unusable (Swagger/UI still shows 0.0.0.0):** When `host_url` is empty in HA config, `10-config` now falls back to the supervisor-bridge IP (`172.30.32.1`) instead of leaving HOST unset. With this fallback, Steel's API serves Swagger/UI at the actual reachable address rather than `0.0.0.0`, which browsers can't resolve. Note: this change did NOT fix the actual line-97 crash reported in HA logs — that fix lands in 0.1.9.
+
+## 0.1.7 — 2026-08-28
+
+### Fixes
+- **UI unusable (HOST=0.0.0.0 in embedded links):** `10-config` now actively detects the container's IP at startup (via `hostname -I` or by deriving from `host_url` in HA config) and exports it as `HOST` before Steel's Node process starts. This complements the v0.1.6 removal of the `HOST=0.0.0.0` defensive default — without a real value to export, Steel's own `HOST ?? "0.0.0.0"` default still won. Note: this change did NOT fix the actual line-97 crash reported in HA logs — that fix lands in 0.1.9.
+
 ## 0.1.6 — 2026-08-28
 
 ### Fixes
