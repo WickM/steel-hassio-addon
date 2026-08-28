@@ -13,8 +13,6 @@ set +eu
 OPTIONS_FILE="/data/options.json"   # must be defined before any reference (bashio sets -u)
 
 # (don't add anything here that uses unset variables — assign first.)
-
-echo "[10-config] uid=$(id -u) cwd=$(pwd)"
 if declare -F bashio::config >/dev/null 2>&1; then
     echo "[10-config] bashio loaded: OK"
 else
@@ -35,6 +33,26 @@ if declare -F bashio::config >/dev/null 2>&1; then
 fi
 
 OPTIONS_FILE="/data/options.json"   # explicit re-affirm after DEBUG block
+
+# ---- Host URL passthrough ----
+# Steel's own default for HOST is 0.0.0.0 (see api/src/env.ts).
+# If host_url is empty, Steel should auto-detect from req.hostname.
+# We force a real host here so UI/Swagger embed usable URLs.
+_FORCED_HOST="$(_bashio_config 'host_url' '')"
+if [ -n "${_FORCED_HOST}" ]; then
+    echo "[10-config] forcing HOST=${_FORCED_HOST} (from host_url)"
+    export HOST="${_FORCED_HOST}"
+else
+    # No host_url set — derive from the container's network interfaces.
+    # This gives Steel a real IP instead of 0.0.0.0 for generated URLs.
+    _AUTO_HOST="$(hostname -I | awk '{print $1}')"
+    if [ -n "${_AUTO_HOST}" ]; then
+        echo "[10-config] auto-detected host: ${_AUTO_HOST}"
+        export HOST="${_AUTO_HOST}"
+    else
+        echo "[10-config] WARNING: could not auto-detect host, leaving HOST unset"
+    fi
+fi
 
 # Same bashio/jq fallback pattern as cognee-addon (v0.1.3 lesson):
 # bashio can be loaded (function exists) but every call to the Supervisor

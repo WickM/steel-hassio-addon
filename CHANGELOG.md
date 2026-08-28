@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6 — 2026-08-28
+
+### Fixes
+- **UI/Swagger host fixed:** `HOST=0.0.0.0` no longer appears in generated UI/Swagger URLs. Steel's own default `HOST=0.0.0.0` is now overridden at runtime by auto-detecting the container's real IP or by passing `host_url` from HA config. `10-config` now sources `/tmp/.steel-env` explicitly and exports `HOST` before Steel's Node process starts. The OPTIONS_FILE unbound-variable crash was also fixed so the config script actually reaches the export stage.
+- **Container crash (`OPTIONS_FILE: unbound variable`):** `rootfs/etc/cont-init.d/10-config` now starts with `set +eu` (not just `set +e`) immediately after the `#!/usr/bin/bashio` shebang. Bashio internally enables `set -u` (nounset) on load, and `set +e` alone only disables `-e`, not `-u`. Re-enabled `set -e` at script end so future fatal misconfig still fails the container instead of silently starting with defaults.
+- **UI unusable (HOST=0.0.0.0 in embedded links):** Removed `: "${HOST:=0.0.0.0}"` defensive default from `rootfs/run.sh`. When `host_url` is empty in HA config, Steel now auto-detects the host from `req.hostname` of the incoming HTTP request (instead of embedding `0.0.0.0` into every self-generated UI link — session URLs, devtoolsInspectorUrl, debugUrl, recording player). HOST export is now conditional (`if [ -n "${HOST:-}" ]; then export HOST; fi`), and the startup log prints `<auto-detect-from-request>` when HOST is empty so the active mode is obvious in HA logs.
+
 ## 0.1.5 — 2026-08-28
 
 ### Fixes

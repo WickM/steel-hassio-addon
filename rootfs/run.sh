@@ -94,6 +94,9 @@ fi
 # Display host as <auto> when not explicitly set, so logs make clear
 # Steel will auto-detect from req.hostname.
 _DISPLAY_HOST="${HOST:-<auto-detect-from-request>}"
+if [ -n "${HOST}" ]; then
+    _DISPLAY_HOST="${HOST}"
+fi
 if declare -F bashio::log.blue >/dev/null 2>&1; then
     bashio::log.blue "[run.sh] starting steel-browser API on ${_DISPLAY_HOST}:${PORT}"
     bashio::log.blue "[run.sh] UI: http://<host>:${PORT}/ui"
