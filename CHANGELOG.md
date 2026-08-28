@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.1.0 — 2026-08-26
+## 0.1.5 — 2026-08-28
 
-Initial release. Wraps `ghcr.io/steel-dev/steel-browser:latest` with s6-overlay + bashio + persistent `/share/steel` volume.
+### Fixes
+- **Container crash (`OPTIONS_FILE: unbound variable`):** `rootfs/etc/cont-init.d/10-config` now starts with `set +eu` (not just `set +e`) immediately after the `#!/usr/bin/bashio` shebang. Bashio internally enables `set -u` (nounset) on load, and `set +e` alone only disables `-e`, not `-u`. Re-enabled `set -e` at script end so future fatal misconfig still fails the container instead of silently starting with defaults.
+- **UI unusable (HOST=0.0.0.0 in embedded links):** Removed `: "${HOST:=0.0.0.0}"` defensive default from `rootfs/run.sh`. When `host_url` is empty in HA config, Steel now auto-detects the host from `req.hostname` of the incoming HTTP request (instead of embedding `0.0.0.0` into every self-generated UI link — session URLs, devtoolsInspectorUrl, debugUrl, recording player). HOST export is now conditional (`if [ -n "${HOST:-}" ]; then export HOST; fi`), and the startup log prints `<auto-detect-from-request>` when HOST is empty so the active mode is obvious in HA logs.
+
+## 0.1.2 — 2026-08-27
 
 ### Features
 - Multi-arch (amd64, aarch64)
