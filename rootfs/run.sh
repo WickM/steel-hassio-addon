@@ -37,15 +37,27 @@ echo "[run.sh] SKIP_FINGERPRINT_INJECTION=${SKIP_FINGERPRINT_INJECTION:-false}"
 echo "[run.sh] DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-<unset>}"
 
 # ---- Defensive defaults ----
+# NOTE: do NOT default HOST to anything (especially not 0.0.0.0). When
+# Steel embeds "0.0.0.0:3000" in self-generated UI/CDP URLs, the web UI
+# becomes unreachable from a real browser. If host_url is empty in the
+# HA config, Steel's own code falls back to req.hostname from the
+# incoming HTTP request, which is what we want. So we only default HOST
+# here if the user actually set it via host_url — otherwise leave it
+# unset and let Steel's auto-detect kick in.
 : "${PORT:=3000}"
-: "${HOST:=0.0.0.0}"
 : "${CDP_REDIRECT_PORT:=9223}"
 : "${LOG_LEVEL:=warn}"
 : "${STEEL_DATA_PATH:=/share/steel}"
 : "${CHROME_HEADLESS:=true}"
 : "${NODE_ENV:=production}"
 
-export PORT HOST CDP_REDIRECT_PORT LOG_LEVEL STEEL_DATA_PATH CHROME_HEADLESS NODE_ENV
+# Export only what we set. HOST is intentionally conditional — if
+# /tmp/.steel-env didn't define it (because host_url was empty), we
+# leave it unset so Steel can detect from req.hostname.
+export PORT CDP_REDIRECT_PORT LOG_LEVEL STEEL_DATA_PATH CHROME_HEADLESS NODE_ENV
+if [ -n "${HOST:-}" ]; then
+    export HOST
+fi
 
 # Ensure data dirs exist (cont-init should have done this already; defensive)
 mkdir -p "${STEEL_DATA_PATH}/profiles" "${STEEL_DATA_PATH}/sessions" "${STEEL_DATA_PATH}/logs"
@@ -79,12 +91,15 @@ fi
 # Steel's upstream CMD is `node ./api/build/server.js` (or whatever the
 # image's CMD is set to). s6-overlay's `run` service execs us, we exec CMD.
 # Use bashio::log.blue for visibility in HA log.
+# Display host as <auto> when not explicitly set, so logs make clear
+# Steel will auto-detect from req.hostname.
+_DISPLAY_HOST="${HOST:-<auto-detect-from-request>}"
 if declare -F bashio::log.blue >/dev/null 2>&1; then
-    bashio::log.blue "[run.sh] starting steel-browser API on ${HOST}:${PORT}"
+    bashio::log.blue "[run.sh] starting steel-browser API on ${_DISPLAY_HOST}:${PORT}"
     bashio::log.blue "[run.sh] UI: http://<host>:${PORT}/ui"
-    bashio::log.blue "[run.sh] CDP: ${HOST}:${CDP_REDIRECT_PORT}"
+    bashio::log.blue "[run.sh] CDP: ${_DISPLAY_HOST}:${CDP_REDIRECT_PORT}"
 else
-    echo "[run.sh] starting steel-browser API on ${HOST}:${PORT}"
+    echo "[run.sh] starting steel-browser API on ${_DISPLAY_HOST}:${PORT}"
 fi
 
 # The upstream CMD is whatever the steel-browser image defines. s6-overlay
