@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10 — 2026-08-28
+
+### Fixes
+- **UI unusable (Swagger/UI still showed 0.0.0.0 in v0.1.8/v0.1.9):** The earlier "leave HOST unset if host_url is empty" logic in `10-config` was wrong: Steel's own default for `HOST` is `"0.0.0.0"` (see `api/src/env.ts` in steel-browser repo), and Steel embeds that value verbatim into every self-generated URL (Swagger `Server` field, session `debugUrl`/`websocketUrl`/`sessionViewerUrl`, `devtoolsInspectorUrl`). Leaving `HOST` unset is **strictly worse** than setting it to `172.30.32.1` because Steel falls back to `0.0.0.0`, which makes the UI/Swagger unreachable from a real browser. `10-config` now ALWAYS exports `HOST` — either from `host_url` if set in HA Configuration, or from the hardcoded fallback (`172.30.32.1`, the Supervisor bridge IP). The `/tmp/.steel-env` file (sourced by `run.sh` via `set -a`) now also unconditionally writes `export HOST='...'`. Override the default in HA Configuration → host_url if your setup uses a different external IP/hostname.
+
 ## 0.1.9 — 2026-08-28
 
 ### Fixes
