@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.12 — 2026-08-29
+
+### Fixes
+- **`host_url` HA-config option was silently ignored:** `_bashio_config 'host_url ''` was being called BEFORE the `_bashio_config()` function was defined in `10-config`. The empty-call fell through to an unset default, which meant `host_url` set in HA Configuration was effectively ignored and the auto-detect path (`hostname -I` → container-internal IP `172.30.33.x`) always won. Result: Steel embedded `172.30.33.6:3000` in all Swagger/UI URLs, which is unreachable from a laptop on the LAN — UI loads but every generated link errors with "took too long to respond". Fix: moved the `_bashio_config()` function definition above the HOST-resolution block so `host_url` is actually read.
+- **Auto-detect path now logs a hint** telling the user to set `host_url` in HA Configuration if they want browser-friendly URLs (the auto-detected container IP is unreachable from outside HA's container network without port mapping).
+
+### Manual action required
+- After updating to 0.1.12, **set `host_url` in HA → Steel Browser → Configuration** to your HA-host LAN URL, e.g. `http://192.168.0.6:3000`. Restart the addon. Steel will then embed `http://192.168.0.6:3000` (or whatever you set) in all Swagger/UI/Session URLs, and those links will resolve correctly from your laptop.
+
 ## 0.1.11 — 2026-08-28
 
 ### Fixes

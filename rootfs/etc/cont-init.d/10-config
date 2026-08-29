@@ -34,37 +34,6 @@ fi
 
 OPTIONS_FILE="/data/options.json"   # explicit re-affirm after DEBUG block
 
-# ---- Host URL passthrough ----
-# Steel's own default for HOST is 0.0.0.0 (see api/src/env.ts in steel-browser
-# repo), which Steel embeds verbatim into all self-generated URLs
-# (debugUrl, websocketUrl, devtoolsInspectorUrl, sessionViewerUrl, Swagger
-# "Server" field). 0.0.0.0 in those URLs makes the UI unreachable from a
-# real browser. We must ALWAYS set HOST — either from host_url, the
-# user's host_url option, or by auto-detecting the container's own IP.
-# Leaving HOST unset is strictly worse than any choice, because Steel
-# falls back to 0.0.0.0 and break the UI.
-#
-# v0.1.11 lesson: hardcoding 172.30.32.1 broke things because that's
-# the openclaw-Companion IP, NOT the Steel-addon's own IP. Steel crashes
-# with EADDRNOTAVAIL if it can't bind its own claimed address.
-_FORCED_HOST="$(_bashio_config 'host_url' '')"
-if [ -n "${_FORCED_HOST}" ]; then
-    echo "[10-config] forcing HOST=${_FORCED_HOST} (from host_url)"
-    HOST="${_FORCED_HOST}"
-else
-    # Auto-detect this container's own IP via hostname -I. Robust against
-    # DHCP/Container-restart IP changes; uses the first non-loopback IPv4.
-    _DEFAULT_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    if [ -z "${_DEFAULT_HOST}" ]; then
-        # Last-resort fallback if hostname -I yields nothing.
-        _DEFAULT_HOST="0.0.0.0"
-        echo "[10-config] WARNING: hostname -I failed, falling back to HOST=0.0.0.0 (UI links will be unreachable)"
-    else
-        echo "[10-config] no host_url set — auto-detected HOST=${_DEFAULT_HOST} (this container's IP)"
-    fi
-    HOST="${_DEFAULT_HOST}"
-fi
-
 # Same bashio/jq fallback pattern as cognee-addon (v0.1.3 lesson):
 # bashio can be loaded (function exists) but every call to the Supervisor
 # API returns 403 forbidden (e.g. sideloaded image, missing supervisor
@@ -117,6 +86,46 @@ _bashio_config() {
         echo "${default}"
     fi
 }
+
+# ---- Host URL passthrough ----
+# Steel's own default for HOST is 0.0.0.0 (see api/src/env.ts in steel-browser
+# repo), which Steel embeds verbatim into all self-generated URLs
+# (debugUrl, websocketUrl, devtoolsInspectorUrl, sessionViewerUrl, Swagger
+# "Server" field). 0.0.0.0 in those URLs makes the UI unreachable from a
+# real browser. We must ALWAYS set HOST — either from host_url, the
+# user's host_url option, or by auto-detecting the container's own IP.
+# Leaving HOST unset is strictly worse than any choice, because Steel
+# falls back to 0.0.0.0 and break the UI.
+#
+# v0.1.11 lesson: hardcoding 172.30.32.1 broke things because that's
+# the openclaw-Companion IP, NOT the Steel-addon's own IP. Steel crashes
+# with EADDRNOTAVAIL if it can't bind its own claimed address.
+#
+# v0.1.12 lesson: _bashio_config must be defined BEFORE it's called.
+# Earlier revisions called `_bashio_config 'host_url'` before the
+# function was defined, which silently returned empty → forced
+# auto-detect path → wrong IP. Now the function is defined first.
+_FORCED_HOST="$(_bashio_config 'host_url' '')"
+if [ -n "${_FORCED_HOST}" ]; then
+    echo "[10-config] forcing HOST=${_FORCED_HOST} (from host_url HA-config)"
+    HOST="${_FORCED_HOST}"
+else
+    # Auto-detect this container's own IP via hostname -I. Robust against
+    # DHCP/Container-restart IP changes; uses the first non-loopback IPv4.
+    # IMPORTANT: this is the container's OWN IP on the HA bridge net
+    # (e.g. 172.30.33.x). It's NOT reachable from your laptop unless
+    # HA maps ports. Set host_url in HA Configuration to your HA-host
+    # LAN IP (e.g. http://192.168.0.6:3000) for browser-friendly URLs.
+    _DEFAULT_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [ -z "${_DEFAULT_HOST}" ]; then
+        # Last-resort fallback if hostname -I yields nothing.
+        _DEFAULT_HOST="0.0.0.0"
+        echo "[10-config] WARNING: hostname -I failed, falling back to HOST=0.0.0.0 (UI links will be unreachable)"
+    else
+        echo "[10-config] no host_url set — auto-detected HOST=${_DEFAULT_HOST} (this container's IP; set host_url in HA Configuration for browser-friendly URLs)"
+    fi
+    HOST="${_DEFAULT_HOST}"
+fi
 
 # ---- Read options ----
 STEEL_PORT="$(_bashio_config 'steel_port' '3000')"
