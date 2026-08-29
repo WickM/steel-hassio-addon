@@ -39,20 +39,29 @@ OPTIONS_FILE="/data/options.json"   # explicit re-affirm after DEBUG block
 # repo), which Steel embeds verbatim into all self-generated URLs
 # (debugUrl, websocketUrl, devtoolsInspectorUrl, sessionViewerUrl, Swagger
 # "Server" field). 0.0.0.0 in those URLs makes the UI unreachable from a
-# real browser. We must ALWAYS set HOST — either from host_url or from
-# our hardcoded fallback (Supervisor bridge IP). Leaving HOST unset is
-# strictly worse than setting it to 172.30.32.1, because Steel will fall
-# back to 0.0.0.0 and break the UI.
+# real browser. We must ALWAYS set HOST — either from host_url, the
+# user's host_url option, or by auto-detecting the container's own IP.
+# Leaving HOST unset is strictly worse than any choice, because Steel
+# falls back to 0.0.0.0 and break the UI.
+#
+# v0.1.11 lesson: hardcoding 172.30.32.1 broke things because that's
+# the openclaw-Companion IP, NOT the Steel-addon's own IP. Steel crashes
+# with EADDRNOTAVAIL if it can't bind its own claimed address.
 _FORCED_HOST="$(_bashio_config 'host_url' '')"
 if [ -n "${_FORCED_HOST}" ]; then
     echo "[10-config] forcing HOST=${_FORCED_HOST} (from host_url)"
     HOST="${_FORCED_HOST}"
 else
-    # Hardcoded fallback: Supervisor bridge IP. This is the IP the HA host
-    # uses for addon-to-addon and LAN access when ports are exposed.
-    # Override via host_url if your setup uses a different external IP.
-    _DEFAULT_HOST="172.30.32.1"
-    echo "[10-config] no host_url set — using hardcoded fallback HOST=${_DEFAULT_HOST}"
+    # Auto-detect this container's own IP via hostname -I. Robust against
+    # DHCP/Container-restart IP changes; uses the first non-loopback IPv4.
+    _DEFAULT_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [ -z "${_DEFAULT_HOST}" ]; then
+        # Last-resort fallback if hostname -I yields nothing.
+        _DEFAULT_HOST="0.0.0.0"
+        echo "[10-config] WARNING: hostname -I failed, falling back to HOST=0.0.0.0 (UI links will be unreachable)"
+    else
+        echo "[10-config] no host_url set — auto-detected HOST=${_DEFAULT_HOST} (this container's IP)"
+    fi
     HOST="${_DEFAULT_HOST}"
 fi
 

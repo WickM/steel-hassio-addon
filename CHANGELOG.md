@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.11 — 2026-08-28
+
+### Fixes
+- **Container restart loop with `EADDRNOTAVAIL: address not available 172.30.32.1:3000`:** v0.1.10's hardcoded `HOST=172.30.32.1` was wrong — that's the **openclaw Companion IP**, not the Steel-addon's own IP. From inside the Steel container, `172.30.32.1` is a remote address on a different container's network namespace; Node's `listen()` rejects it with `EADDRNOTAVAIL` because the local interface has no such IP, then s6-overlay restarts the service, which kills any stale nginx (defensive cleanup), then crashes again → tight crash loop. Fix: `10-config` now auto-detects the Steel container's own IP via `hostname -I | awk '{print $1}'` and exports that as the `HOST` fallback when `host_url` is empty. Last-resort fallback (only if `hostname -I` yields nothing) is still `0.0.0.0` with a loud WARNING so it doesn't silently break the UI again.
+
+### Lesson (MEMORY.md)
+- **Never hardcode another container's IP as this container's `HOST`/`bind` address.** `172.30.32.1` is the Supervisor bridge IP that openclaw (a Companion) lives at; Steel (a real addon) gets a different IP per container restart on `172.30.32.0/23` (e.g. `172.30.33.12`). Always use `hostname -I` for the container's own IP, or `0.0.0.0` to bind-all.
+
 ## 0.1.10 — 2026-08-28
 
 ### Fixes
