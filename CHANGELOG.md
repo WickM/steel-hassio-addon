@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.13 — 2026-08-29
+
+### Fixes
+- **`host_url` HA-config option still ignored when bashio returns empty** (e.g. Supervisor-API 403 on sideloaded image): v0.1.12 fixed the call-before-definition bug, but the bashio→jq fallback LATCH only triggered for `steel_api_key`. When bashio returned empty for `host_url` (default-value path on 403), the script fell through to the auto-detect `hostname -I` branch and exported the container's internal IP (`172.30.33.x`), which is unreachable from a real browser. Fix: extended the jq-latch to also trigger for `host_url` — same logic as `steel_api_key`: if bashio returns empty but `jq` finds a non-empty value in `/data/options.json`, latch jq mode for the rest of the script and use the jq value.
+- **DEBUG-output jq query was broken (always reported `<jq-error>`):** The v0.1.4-v0.1.12 inline `jq` query inside `echo` had escaped quotes (`jq -r '.host_url // \"<missing>\"' ...`) that bash parsed wrong, so the DEBUG line always reported `<jq-error>` regardless of what `/data/options.json` actually contained — making it impossible to diagnose whether the option file had a value at all. Fix: read the jq output into a temp variable first (`_raw_host_url="$(jq ...)"`), then echo the variable — single-quoted jq query string, bash-safe.
+
+### Manual action required
+- After updating to 0.1.13, in HA add-on logs look for the new DEBUG lines:
+  - `[10-config] DEBUG raw host_url field: '<value>'` — should show your configured `host_url`, OR `<missing>` if you didn't set one
+  - `[10-config] DEBUG bashio host_url probe: '<value>'` — bashio's reading; empty string or `<bashio-empty>` means bashio failed to read it (403 from Supervisor API)
+  - `[10-config] bashio returned empty for host_url but options.json has value='<value>' — switching to jq fallback` — proves bashio was lying and we successfully fell through to jq
+  - `[10-config] forcing HOST=<your-host_url>` (when `host_url` IS set) — this is the success marker; the value should be your configured URL, not `172.30.33.x`
+- If `host_url` still doesn't pick up after 0.1.13, the option isn't actually written to `/data/options.json` — check HA Configuration → Steel Browser → Configuration tab that `host_url` is set, then check that HA Supervisor is not silently stripping unknown options (rare, but reported on some HA versions with custom repo URLs).
+
 ## 0.1.12 — 2026-08-29
 
 ### Fixes

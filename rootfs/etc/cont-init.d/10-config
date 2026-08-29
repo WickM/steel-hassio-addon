@@ -19,17 +19,22 @@ else
     echo "[10-config] bashio NOT loaded — falling back to jq"
 fi
 
-# DEBUG v0.1.4: show what we can actually read. Tells us whether bashio is
+# DEBUG v0.1.13: show what we can actually read. Tells us whether bashio is
 # silent-empty (403 from supervisor API) or whether /data/options.json is
-# missing/empty.
+# missing/empty. Previous v0.1.4-v0.1.12 versions had an escaped-quote bug
+# in the inline jq query that always returned "<jq-error>" — masking whether
+# /data/options.json even had a value. We now read into a variable first,
+# then echo it, so the jq query string is single-quoted and bash-safe.
 if [ -f "${OPTIONS_FILE}" ]; then
     echo "[10-config] DEBUG options.json present, size=$(stat -c%s "${OPTIONS_FILE}") bytes"
-    echo "[10-config] DEBUG raw host_url field: $(jq -r '.host_url // \"<missing>\"' "${OPTIONS_FILE}" 2>/dev/null || echo '<jq-error>')"
+    _raw_host_url="$(jq -r '.host_url // "<missing>"' "${OPTIONS_FILE}" 2>/dev/null || echo '<jq-error>')"
+    echo "[10-config] DEBUG raw host_url field: '${_raw_host_url}'"
 else
     echo "[10-config] DEBUG options.json MISSING at ${OPTIONS_FILE}"
 fi
 if declare -F bashio::config >/dev/null 2>&1; then
-    echo "[10-config] DEBUG bashio host_url probe: '$(bashio::config 'host_url' '<bashio-empty>' 2>&1)'"
+    _bashio_host_url="$(bashio::config 'host_url' '<bashio-empty>' 2>&1 || echo '<bashio-error>')"
+    echo "[10-config] DEBUG bashio host_url probe: '${_bashio_host_url}'"
 fi
 
 OPTIONS_FILE="/data/options.json"   # explicit re-affirm after DEBUG block
@@ -59,13 +64,16 @@ _bashio_config() {
     if declare -F bashio::config >/dev/null 2>&1; then
         local bashio_val
         bashio_val="$(bashio::config "${key}" "${default}" 2>/dev/null)"
-        # Probe: for steel_api_key, if bashio returned empty but jq finds a
-        # value, latch jq mode.
-        if [ "${key}" = "steel_api_key" ] && [ -z "${bashio_val}" ] && [ -f "${OPTIONS_FILE}" ]; then
+        # Probe: for any "important" key, if bashio returned empty/placeholder
+        # but jq finds a value, latch jq mode. Triggers for steel_api_key
+        # (always) and host_url (v0.1.13: was missing — caused user's
+        # configured host_url to be silently ignored when bashio 403'd).
+        if { [ "${key}" = "steel_api_key" ] || [ "${key}" = "host_url" ]; } \
+                && [ -z "${bashio_val}" ] && [ -f "${OPTIONS_FILE}" ]; then
             local jq_val
             jq_val="$(jq -r --arg k "${key}" 'if (.[$k] == null) then empty else .[$k] end' "${OPTIONS_FILE}" 2>/dev/null)"
             if [ -n "${jq_val}" ]; then
-                echo "[10-config] bashio returned empty for ${key} but options.json has value — switching to jq fallback" >&2
+                echo "[10-config] bashio returned empty for ${key} but options.json has value='${jq_val}' — switching to jq fallback" >&2
                 touch "${_USE_JQ_FLAG}"
                 echo "${jq_val}"
                 return
