@@ -113,10 +113,36 @@ _bashio_config() {
 # Earlier revisions called `_bashio_config 'host_url'` before the
 # function was defined, which silently returned empty → forced
 # auto-detect path → wrong IP. Now the function is defined first.
+#
+# v0.1.14 lesson: `host_url` in HA config may come in as a full URL like
+# "http://192.168.0.6:3000", or "192.168.0.6:3000", or bare "192.168.0.6".
+# Steel's HOST env var expects just a hostname/IP — no scheme, no port.
+# If we pass the full URL through, run.sh logging becomes
+# "http://192.168.0.6:3000:3000" (double port) and Steel tries to bind a
+# non-IP value as its bind host (EADDRNOTAVAIL / silent UI failure).
+# Normalize: strip scheme, strip trailing port if it matches PORT.
+_normalize_host() {
+    local h="$1"
+    # Strip scheme
+    h="${h#http://}"
+    h="${h#https://}"
+    # Strip trailing / if any
+    h="${h%/}"
+    # Strip trailing :PORT if PORT matches
+    if [ -n "${PORT:-}" ]; then
+        case "$h" in
+            *":${PORT}")
+                h="${h%:${PORT}}"
+                ;;
+        esac
+    fi
+    printf '%s' "$h"
+}
 _FORCED_HOST="$(_bashio_config 'host_url' '')"
 if [ -n "${_FORCED_HOST}" ]; then
-    echo "[10-config] forcing HOST=${_FORCED_HOST} (from host_url HA-config)"
-    HOST="${_FORCED_HOST}"
+    _NORMALIZED_HOST="$(_normalize_host "${_FORCED_HOST}")"
+    echo "[10-config] forcing HOST=${_NORMALIZED_HOST} (from host_url HA-config; raw='${_FORCED_HOST}')"
+    HOST="${_NORMALIZED_HOST}"
 else
     # Auto-detect this container's own IP via hostname -I. Robust against
     # DHCP/Container-restart IP changes; uses the first non-loopback IPv4.

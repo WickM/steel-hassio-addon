@@ -93,16 +93,35 @@ fi
 # Use bashio::log.blue for visibility in HA log.
 # Display host as <auto> when not explicitly set, so logs make clear
 # Steel will auto-detect from req.hostname.
+# v0.1.14 lesson: do NOT blindly append :${PORT} to ${HOST}. If HOST was
+# normalized in 10-config to a bare host, appending :PORT is correct.
+# If someone bypasses our normalizer, we still don't want to produce
+# "http://1.2.3.4:3000:3000" — strip any scheme from HOST first.
 _DISPLAY_HOST="${HOST:-<auto-detect-from-request>}"
 if [ -n "${HOST:-}" ]; then
     _DISPLAY_HOST="${HOST}"
+    # Defensive: if HOST somehow still has a scheme (normalizer was
+    # bypassed or HOST was set externally), strip it for display only.
+    case "${_DISPLAY_HOST}" in
+        http://*|https://*)
+            _DISPLAY_HOST="${_DISPLAY_HOST#http://}"
+            _DISPLAY_HOST="${_DISPLAY_HOST#https://}"
+            ;;
+    esac
+    # Defensive: also strip trailing :PORT if HOST already includes one
+    # matching PORT (avoid http://1.2.3.4:3000:3000 in logs).
+    case "${_DISPLAY_HOST}" in
+        *":${PORT}")
+            _DISPLAY_HOST="${_DISPLAY_HOST%:${PORT}}"
+            ;;
+    esac
 fi
 if declare -F bashio::log.blue >/dev/null 2>&1; then
-    bashio::log.blue "[run.sh] starting steel-browser API on ${_DISPLAY_HOST}:${PORT}"
-    bashio::log.blue "[run.sh] UI: http://<host>:${PORT}/ui"
-    bashio::log.blue "[run.sh] CDP: ${_DISPLAY_HOST}:${CDP_REDIRECT_PORT}"
+    bashio::log.blue "[run.sh] starting steel-browser API on http://${_DISPLAY_HOST}:${PORT}"
+    bashio::log.blue "[run.sh] UI:    http://${_DISPLAY_HOST}:${PORT}/ui"
+    bashio::log.blue "[run.sh] CDP:   http://${_DISPLAY_HOST}:${CDP_REDIRECT_PORT}"
 else
-    echo "[run.sh] starting steel-browser API on ${_DISPLAY_HOST}:${PORT}"
+    echo "[run.sh] starting steel-browser API on http://${_DISPLAY_HOST}:${PORT}"
 fi
 
 # The upstream CMD is whatever the steel-browser image defines. s6-overlay

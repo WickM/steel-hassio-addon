@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.14 — 2026-08-29
+
+### Fixes
+- **Logging produced invalid URLs like `http://192.168.0.6:3000:3000`:** Steel's `HOST` env var expects a bare hostname/IP — no scheme, no port. After v0.1.13 successfully read `host_url` from HA config, two related bugs surfaced in the logging output:
+  - The user's `host_url` value (e.g. `http://192.168.0.6:3000`) was passed through verbatim into Steel's `HOST`. Steel tried to bind to the literal string `http://192.168.0.6:3000` (with the scheme and port still attached), which is not a valid bind address — resulted in `EADDRNOTAVAIL` or silent failure, UI never came up.
+  - The `run.sh` startup log line `[run.sh] starting steel-browser API on ${HOST}:${PORT}` did blind string concatenation, producing `http://192.168.0.6:3000:3000` (the `:${PORT}` suffix was appended to a value that already contained `:3000`).
+- **Fix in `rootfs/etc/cont-init.d/10-config`:** added `_normalize_host()` helper that strips any `http://`/`https://` scheme and any trailing `:PORT` matching the actual PORT from the `host_url` value BEFORE exporting it as `HOST`. Result: `http://192.168.0.6:3000`, `192.168.0.6:3000`, and bare `192.168.0.6` all normalize to `192.168.0.6` for `HOST`. The original raw value is still echoed in the log line (`raw='...'`), so you can see what the user configured vs. what we actually used.
+- **Fix in `rootfs/run.sh`:** startup-log block now does defensive scheme-stripping + trailing-port-stripping on `${HOST}` before building display URLs, AND always wraps the host in `http://` so the display is consistently a full URL (`http://1.2.3.4:3000`). Result: the log line is always readable, never produces a double-port URL even if `HOST` somehow contains a port or scheme.
+
+### Manual action required
+- After updating to 0.1.14, in HA add-on logs look for:
+  - `[10-config] forcing HOST=<bare-host> (from host_url HA-config; raw='<original-value>')` — confirms normalization happened; the raw value should be what you typed in HA Configuration, the normalized value should be bare hostname/IP
+  - `[run.sh] starting steel-browser API on http://<bare-host>:3000` — single port, no double-port artifact
+  - `[run.sh] UI:    http://<bare-host>:3000/ui`
+  - `[run.sh] CDP:   http://<bare-host>:9223`
+- **Recommendation for `host_url` value going forward:** use the bare hostname/IP without scheme and without port (e.g. `192.168.0.6` instead of `http://192.168.0.6:3000`). The normalizer handles all common formats, but the bare form is least surprising for anyone reading the config later.
+
 ## 0.1.13 — 2026-08-29
 
 ### Fixes
