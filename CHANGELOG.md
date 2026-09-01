@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.15 — 2026-09-01
+
+### Fixes
+
+- **Service crash loop with `EADDRNOTAVAIL: address not available 192.168.0.6:3000`:** v0.1.14 had a fundamental design flaw — we passed the user's `host_url` (e.g. `http://192.168.0.6:3000`) into Steel's `HOST` env var after stripping scheme and port. Result: `HOST=192.168.0.6` (the HA host's LAN IP, NOT a local interface inside the Steel container) → node's `app.listen('192.168.0.6', 3000)` throws `EADDRNOTAVAIL` because no local interface has that IP → s6-overlay restart loop with the same crash every ~3.5s, node actually loaded its plugins successfully but failed at the listen step. Fix in v0.1.15: **separate `HOST` (bind address) from `DOMAIN` (URL host)**. `HOST` is unconditionally `0.0.0.0` — bindable on every interface inside the container, the same value Steel uses as its own default (`z.string().optional().default("0.0.0.0")` in `api/src/env.ts`). `DOMAIN` (and `CDP_DOMAIN`) are exported only when the user sets `host_url` in HA Configuration — Steel uses those for self-generated URLs (`debugUrl`, `websocketUrl`, `devtoolsInspectorUrl`, `sessionViewerUrl`, Swagger "Server" field). Source: Steel's `api/src/services/cdp/cdp.service.ts` `getDebuggerBase()`:
+  ```ts
+  const baseUrl = env.CDP_DOMAIN ?? env.DOMAIN ?? `${env.HOST}:${env.CDP_REDIRECT_PORT}`;
+  ```
+  This is the architecture Steel was always designed for — we just conflated the two vars in v0.1.10–v0.1.14. v0.1.15 fixes it.
+- **Crash log now shows which addresses failed:** added `DOMAIN=...` and `CDP_DOMAIN=...` to the `[run.sh]` startup diagnostics, plus a `[10-config]` line distinguishing the bind address (`HOST`) from the URL host (`DOMAIN`).
+- **`options.env` summary file includes `DOMAIN`/`CDP_DOMAIN`** so post-mortem debugging shows the full state.
+
+### Lesson
+
+- When wrapping an upstream Docker image, read the upstream source for what each env var actually does — don't conflate "bind address" with "URL host" just because they happen to take similar values in dev. Steel's `HOST` is bind; `DOMAIN`/`CDP_DOMAIN` are URL host. The fact that they share defaults for dev convenience is incidental.
+
 ## 0.1.14 — 2026-08-29
 
 ### Fixes

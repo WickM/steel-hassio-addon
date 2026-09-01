@@ -26,7 +26,9 @@ fi
 # ---- Diagnostics ----
 echo "[run.sh] uid=$(id -u) cwd=$(pwd) PATH=$PATH"
 echo "[run.sh] node: $(command -v node || echo 'NOT FOUND')"
-echo "[run.sh] PORT=${PORT:-3000} HOST=${HOST:-0.0.0.0}"
+echo "[run.sh] PORT=${PORT:-3000} HOST=${HOST:-<unset>}"
+echo "[run.sh] DOMAIN=${DOMAIN:-<unset — Steel falls back to HOST in URLs>}"
+echo "[run.sh] CDP_DOMAIN=${CDP_DOMAIN:-<unset — Steel falls back to HOST:CDP_REDIRECT_PORT in URLs>}"
 echo "[run.sh] STEEL_DATA_PATH=${STEEL_DATA_PATH:-/share/steel}"
 echo "[run.sh] CHROME_HEADLESS=${CHROME_HEADLESS:-true}"
 echo "[run.sh] CHROME_ARGS=${CHROME_ARGS:-<unset>}"
@@ -37,13 +39,11 @@ echo "[run.sh] SKIP_FINGERPRINT_INJECTION=${SKIP_FINGERPRINT_INJECTION:-false}"
 echo "[run.sh] DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-<unset>}"
 
 # ---- Defensive defaults ----
-# NOTE: do NOT default HOST to anything (especially not 0.0.0.0). When
-# Steel embeds "0.0.0.0:3000" in self-generated UI/CDP URLs, the web UI
-# becomes unreachable from a real browser. If host_url is empty in the
-# HA config, Steel's own code falls back to req.hostname from the
-# incoming HTTP request, which is what we want. So we only default HOST
-# here if the user actually set it via host_url — otherwise leave it
-# unset and let Steel's auto-detect kick in.
+# v0.1.15: HOST is the bind address (10-config sets 0.0.0.0). DOMAIN is
+# the URL host (10-config sets from `host_url` HA option, may be unset).
+# We don't default HOST here — 10-config already set it. We only default
+# PORT/CDP_REDIRECT_PORT/etc. in case /tmp/.steel-env didn't define them
+# (shouldn't happen, defensive).
 : "${PORT:=3000}"
 : "${CDP_REDIRECT_PORT:=9223}"
 : "${LOG_LEVEL:=warn}"
@@ -51,12 +51,16 @@ echo "[run.sh] DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-<unset>}"
 : "${CHROME_HEADLESS:=true}"
 : "${NODE_ENV:=production}"
 
-# Export only what we set. HOST is intentionally conditional — if
-# /tmp/.steel-env didn't define it (because host_url was empty), we
-# leave it unset so Steel can detect from req.hostname.
+# Export the resolved values. HOST must always be set (10-config sets
+# 0.0.0.0). DOMAIN/CDP_DOMAIN are conditional — leave unset if user
+# didn't configure host_url in HA Configuration.
 export PORT CDP_REDIRECT_PORT LOG_LEVEL STEEL_DATA_PATH CHROME_HEADLESS NODE_ENV
-if [ -n "${HOST:-}" ]; then
-    export HOST
+export HOST
+if [ -n "${DOMAIN:-}" ]; then
+    export DOMAIN
+fi
+if [ -n "${CDP_DOMAIN:-}" ]; then
+    export CDP_DOMAIN
 fi
 
 # Ensure data dirs exist (cont-init should have done this already; defensive)
@@ -88,38 +92,32 @@ if command -v fuser >/dev/null 2>&1; then
 fi
 
 # ---- Launch ----
-# Steel's upstream CMD is `node ./api/build/server.js` (or whatever the
-# image's CMD is set to). s6-overlay's `run` service execs us, we exec CMD.
-# Use bashio::log.blue for visibility in HA log.
-# Display host as <auto> when not explicitly set, so logs make clear
-# Steel will auto-detect from req.hostname.
-# v0.1.14 lesson: do NOT blindly append :${PORT} to ${HOST}. If HOST was
-# normalized in 10-config to a bare host, appending :PORT is correct.
-# If someone bypasses our normalizer, we still don't want to produce
-# "http://1.2.3.4:3000:3000" — strip any scheme from HOST first.
-_DISPLAY_HOST="${HOST:-<auto-detect-from-request>}"
-if [ -n "${HOST:-}" ]; then
-    _DISPLAY_HOST="${HOST}"
-    # Defensive: if HOST somehow still has a scheme (normalizer was
-    # bypassed or HOST was set externally), strip it for display only.
-    case "${_DISPLAY_HOST}" in
-        http://*|https://*)
-            _DISPLAY_HOST="${_DISPLAY_HOST#http://}"
-            _DISPLAY_HOST="${_DISPLAY_HOST#https://}"
-            ;;
-    esac
-    # Defensive: also strip trailing :PORT if HOST already includes one
-    # matching PORT (avoid http://1.2.3.4:3000:3000 in logs).
-    case "${_DISPLAY_HOST}" in
-        *":${PORT}")
-            _DISPLAY_HOST="${_DISPLAY_HOST%:${PORT}}"
-            ;;
-    esac
-fi
+# Display host for log lines. v0.1.15: HOST is the bind address (always
+# 0.0.0.0), DOMAIN is the URL host (from host_url HA option). For log
+# display we want the URL the user actually opens in their browser —
+# so prefer DOMAIN, fall back to HOST for display only. This is purely
+# cosmetic; the actual listen address is HOST=0.0.0.0.
+_DISPLAY_HOST="${DOMAIN:-${HOST:-0.0.0.0}}"
+# Defensive strip scheme (shouldn't happen — 10-config normalizes)
+case "${_DISPLAY_HOST}" in
+    http://*|https://*)
+        _DISPLAY_HOST="${_DISPLAY_HOST#http://}"
+        _DISPLAY_HOST="${_DISPLAY_HOST#https://}"
+        ;;
+esac
+# Defensive strip trailing :PORT (avoid http://1.2.3.4:3000:3000 in logs)
+case "${_DISPLAY_HOST}" in
+    *":${PORT}")
+        _DISPLAY_HOST="${_DISPLAY_HOST%:${PORT}}"
+        ;;
+esac
 if declare -F bashio::log.blue >/dev/null 2>&1; then
     bashio::log.blue "[run.sh] starting steel-browser API on http://${_DISPLAY_HOST}:${PORT}"
     bashio::log.blue "[run.sh] UI:    http://${_DISPLAY_HOST}:${PORT}/ui"
     bashio::log.blue "[run.sh] CDP:   http://${_DISPLAY_HOST}:${CDP_REDIRECT_PORT}"
+    if [ "${HOST}" != "0.0.0.0" ]; then
+        bashio::log.blue "[run.sh] note: HOST=${HOST} (bind address, separate from DOMAIN)"
+    fi
 else
     echo "[run.sh] starting steel-browser API on http://${_DISPLAY_HOST}:${PORT}"
 fi

@@ -96,69 +96,78 @@ _bashio_config() {
 }
 
 # ---- Host URL passthrough ----
-# Steel's own default for HOST is 0.0.0.0 (see api/src/env.ts in steel-browser
-# repo), which Steel embeds verbatim into all self-generated URLs
-# (debugUrl, websocketUrl, devtoolsInspectorUrl, sessionViewerUrl, Swagger
-# "Server" field). 0.0.0.0 in those URLs makes the UI unreachable from a
-# real browser. We must ALWAYS set HOST — either from host_url, the
-# user's host_url option, or by auto-detecting the container's own IP.
-# Leaving HOST unset is strictly worse than any choice, because Steel
-# falls back to 0.0.0.0 and break the UI.
+# Steel has TWO distinct env vars that we previously conflated:
+#   - HOST  — bind address for node's listen(). Must be a LOCAL interface
+#             the container can bind to (0.0.0.0, container IP). If we
+#             pass an external IP like 192.168.0.6, node throws
+#             EADDRNOTAVAIL because no local interface has that IP.
+#   - DOMAIN (and CDP_DOMAIN) — host Steel embeds in self-generated URLs
+#             (debugUrl, websocketUrl, devtoolsInspectorUrl, sessionViewerUrl,
+#             Swagger "Server" field). Look at Steel's
+#             api/src/services/cdp/cdp.service.ts `getDebuggerBase()`:
+#               const baseUrl = env.CDP_DOMAIN ?? env.DOMAIN ?? `${env.HOST}:${env.CDP_REDIRECT_PORT}`;
+#             If DOMAIN/CDP_DOMAIN is set, that wins for URLs. Otherwise
+#             Steel falls back to HOST. So we want HOST to be the bind
+#             address and DOMAIN to be the user-facing URL host.
 #
-# v0.1.11 lesson: hardcoding 172.30.32.1 broke things because that's
-# the openclaw-Companion IP, NOT the Steel-addon's own IP. Steel crashes
-# with EADDRNOTAVAIL if it can't bind its own claimed address.
+# v0.1.14 BUG (and prior): we passed `host_url` (e.g. "http://192.168.0.6:3000")
+# as HOST after stripping scheme + port. Result: HOST=192.168.0.6 (the
+# HA host's LAN IP, NOT a local interface inside the Steel container)
+# → node crashes with EADDRNOTAVAIL: address not available 192.168.0.6:3000.
 #
-# v0.1.12 lesson: _bashio_config must be defined BEFORE it's called.
-# Earlier revisions called `_bashio_config 'host_url'` before the
-# function was defined, which silently returned empty → forced
-# auto-detect path → wrong IP. Now the function is defined first.
+# v0.1.15 fix:
+#   1. HOST is unconditionally 0.0.0.0 (Steel also defaults to this if
+#      unset, but we set it explicitly for clarity in logs). 0.0.0.0 binds
+#      on all interfaces inside the container — works regardless of which
+#      IP HA assigns the container on the bridge network.
+#   2. DOMAIN is derived from `host_url` HA option (if set). Steel uses
+#      DOMAIN to build UI/API URLs that the user's browser can resolve.
+#   3. CDP_DOMAIN is set to the same value (DOMAIN) so the CDP debugger
+#      URLs also resolve. If user sets `host_url` without explicit CDP
+#      port, the debugger URLs may need their own override — but Steel's
+#      code substitutes CDP_REDIRECT_PORT into the path anyway, so we
+#      can pass DOMAIN for both.
+#   4. If `host_url` is empty, leave DOMAIN/CDP_DOMAIN unset. Steel then
+#      falls back to HOST (0.0.0.0) for URLs — broken in browsers — but
+#      at least the API stays up. User should set `host_url` for
+#      browser-friendly URLs. (Earlier v0.1.10 also auto-detected the
+#      container IP via `hostname -I` and exported that as HOST, but that
+#      was wrong for the same reason: container IP is not bindable as
+#      host_url because Steel uses it for both bind and URLs.)
 #
-# v0.1.14 lesson: `host_url` in HA config may come in as a full URL like
-# "http://192.168.0.6:3000", or "192.168.0.6:3000", or bare "192.168.0.6".
-# Steel's HOST env var expects just a hostname/IP — no scheme, no port.
-# If we pass the full URL through, run.sh logging becomes
-# "http://192.168.0.6:3000:3000" (double port) and Steel tries to bind a
-# non-IP value as its bind host (EADDRNOTAVAIL / silent UI failure).
-# Normalize: strip scheme, strip trailing port if it matches PORT.
-_normalize_host() {
+# Legacy revision history:
+#   v0.1.10: hardcoded HOST=172.30.32.1 (Supervisor bridge IP) → EADDRNOTAVAIL.
+#   v0.1.11: same, fixed in comment only.
+#   v0.1.12: call-order bug, _bashio_config defined after being called.
+#   v0.1.13: extended jq-latch to host_url, fixed DEBUG jq query.
+#   v0.1.14: stripped scheme/port from host_url before exporting as HOST.
+#            Still wrong: external IP not bindable inside container.
+#   v0.1.15: split HOST (bind, always 0.0.0.0) from DOMAIN (URL host,
+#            from host_url HA option). This is the correct architecture.
+_NORMALIZE_URL_HOST() {
     local h="$1"
     # Strip scheme
     h="${h#http://}"
     h="${h#https://}"
-    # Strip trailing / if any
+    # Strip trailing /
     h="${h%/}"
-    # Strip trailing :PORT if PORT matches
-    if [ -n "${PORT:-}" ]; then
-        case "$h" in
-            *":${PORT}")
-                h="${h%:${PORT}}"
-                ;;
-        esac
-    fi
     printf '%s' "$h"
 }
-_FORCED_HOST="$(_bashio_config 'host_url' '')"
-if [ -n "${_FORCED_HOST}" ]; then
-    _NORMALIZED_HOST="$(_normalize_host "${_FORCED_HOST}")"
-    echo "[10-config] forcing HOST=${_NORMALIZED_HOST} (from host_url HA-config; raw='${_FORCED_HOST}')"
-    HOST="${_NORMALIZED_HOST}"
+
+# Bind address: always 0.0.0.0 — bindable on every interface.
+HOST="0.0.0.0"
+echo "[10-config] HOST=0.0.0.0 (bind address — accepts on all interfaces)"
+
+# URL host (for DOMAIN/CDP_DOMAIN): only set if user configured host_url.
+_FORCED_URL_HOST="$(_bashio_config 'host_url' '')"
+if [ -n "${_FORCED_URL_HOST}" ]; then
+    _NORMALIZED_URL_HOST="$(_NORMALIZE_URL_HOST "${_FORCED_URL_HOST}")"
+    echo "[10-config] DOMAIN=${_NORMALIZED_URL_HOST} (from host_url HA-config; raw='${_FORCED_URL_HOST}')"
+    DOMAIN="${_NORMALIZED_URL_HOST}"
+    CDP_DOMAIN="${_NORMALIZED_URL_HOST}"
 else
-    # Auto-detect this container's own IP via hostname -I. Robust against
-    # DHCP/Container-restart IP changes; uses the first non-loopback IPv4.
-    # IMPORTANT: this is the container's OWN IP on the HA bridge net
-    # (e.g. 172.30.33.x). It's NOT reachable from your laptop unless
-    # HA maps ports. Set host_url in HA Configuration to your HA-host
-    # LAN IP (e.g. http://192.168.0.6:3000) for browser-friendly URLs.
-    _DEFAULT_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    if [ -z "${_DEFAULT_HOST}" ]; then
-        # Last-resort fallback if hostname -I yields nothing.
-        _DEFAULT_HOST="0.0.0.0"
-        echo "[10-config] WARNING: hostname -I failed, falling back to HOST=0.0.0.0 (UI links will be unreachable)"
-    else
-        echo "[10-config] no host_url set — auto-detected HOST=${_DEFAULT_HOST} (this container's IP; set host_url in HA Configuration for browser-friendly URLs)"
-    fi
-    HOST="${_DEFAULT_HOST}"
+    echo "[10-config] no host_url set — DOMAIN/CDP_DOMAIN unset (Steel will fall back to HOST=0.0.0.0 in URLs, set host_url in HA Configuration for browser-friendly URLs)"
+    unset DOMAIN CDP_DOMAIN
 fi
 
 # ---- Read options ----
@@ -178,12 +187,9 @@ DATA_PATH="$(_bashio_config 'data_path' '/share/steel')"
 SKIP_FINGERPRINT_INJECTION="$(_bashio_config 'skip_fingerprint_injection' 'false')"
 DEFAULT_TIMEZONE="$(_bashio_config 'default_timezone' '')"
 PROXY_URL="$(_bashio_config 'proxy_url' '')"
-# Public host Steel should embed in self-generated URLs (UI links,
-# debugUrl, devtoolsInspectorUrl). If empty, Steel will use the
-# request's Host header (which works behind HA's host networking but
-# breaks for direct browser access). Set this in the HA Configuration
-# tab to the URL you actually open in your browser.
-HOST_URL="$(_bashio_config 'host_url' '')"
+# Note: `host_url` was already read earlier (for DOMAIN/CDP_DOMAIN).
+# Don't re-read it here. The DOMAIN/CDP_DOMAIN values from the host_url
+# block above are still in scope.
 
 # ---- Prepare persistent dirs ----
 # Steel writes browser profile state (cookies, localStorage, IndexedDB)
@@ -201,12 +207,22 @@ echo "[10-config] data dir ready: $(ls -ld ${DATA_PATH})"
 # Map addon option names to Steel's expected env var names (see steel's
 # .env.example). All are env-var-driven; no config files to template.
 export PORT="${STEEL_PORT}"
-# ALWAYS export HOST (either from host_url or the hardcoded fallback
-# set above). Leaving HOST unset lets Steel fall back to its own default
-# of "0.0.0.0", which makes every self-generated UI/CDP URL unreachable
-# from a real browser. We chose 172.30.32.1 (Supervisor bridge IP) as a
-# reasonable default; override via host_url in the HA Configuration tab.
+# v0.1.15: HOST is the bind address for node's listen(). Always 0.0.0.0
+# so node can actually bind (EADDRNOTAVAIL if we passed an external IP
+# like 192.168.0.6). UI/CDP URLs use DOMAIN/CDP_DOMAIN (set above from
+# host_url HA option), not HOST.
 export HOST="${HOST}"
+# DOMAIN / CDP_DOMAIN — set above from `host_url` if user configured
+# one in HA Configuration. Used by Steel's getDebuggerBase() to build
+# debugUrl / websocketUrl / devtoolsInspectorUrl / sessionViewerUrl.
+# Leave unset if user didn't set host_url — Steel falls back to HOST
+# (0.0.0.0) in URLs, which breaks browsers but at least keeps the API up.
+if [ -n "${DOMAIN:-}" ]; then
+    export DOMAIN
+fi
+if [ -n "${CDP_DOMAIN:-}" ]; then
+    export CDP_DOMAIN
+fi
 export CDP_REDIRECT_PORT="${STEEL_PORT_CDP:-9223}"
 export NODE_ENV=production
 export CHROME_HEADLESS
@@ -236,7 +252,9 @@ fi
 {
     echo "DATA_PATH=${DATA_PATH}"
     echo "PORT=${PORT}"
-    echo "HOST=${HOST:-<unset — falls back to req.hostname>}"
+    echo "HOST=${HOST:-<unset — Steel default 0.0.0.0 for bind>}"
+    echo "DOMAIN=${DOMAIN:-<unset — Steel falls back to HOST in URLs (0.0.0.0, broken in browsers)>}"
+    echo "CDP_DOMAIN=${CDP_DOMAIN:-<unset — Steel falls back to HOST:CDP_REDIRECT_PORT in URLs>}"
     echo "CDP_REDIRECT_PORT=${CDP_REDIRECT_PORT}"
     echo "LOG_LEVEL=${LOG_LEVEL}"
     echo "CHROME_HEADLESS=${CHROME_HEADLESS}"
@@ -257,6 +275,8 @@ _ENV_TMP="/tmp/.steel-env"
 {
     echo "export PORT='${PORT}'"
     echo "export HOST='${HOST}'"
+    [ -n "${DOMAIN:-}" ] && echo "export DOMAIN='${DOMAIN}'"
+    [ -n "${CDP_DOMAIN:-}" ] && echo "export CDP_DOMAIN='${CDP_DOMAIN}'"
     echo "export CDP_REDIRECT_PORT='${CDP_REDIRECT_PORT}'"
     echo "export NODE_ENV='${NODE_ENV}'"
     echo "export CHROME_HEADLESS='${CHROME_HEADLESS}'"
@@ -273,8 +293,8 @@ chmod 600 "${_ENV_TMP}"
 
 echo "[10-config] options written to ${DATA_PATH}/logs/options.env"
 echo "[10-config] env file: ${_ENV_TMP}"
-# DEBUG v0.1.4: show what was actually exported (post-fix state).
-echo "[10-config] DEBUG exported HOST='${HOST:-<unset>}' HOST_URL='${HOST_URL:-<unset>}'"
+# DEBUG: show what was actually exported (post-fix state).
+echo "[10-config] DEBUG exported HOST='${HOST:-<unset>}' DOMAIN='${DOMAIN:-<unset>}' CDP_DOMAIN='${CDP_DOMAIN:-<unset>}'"
 echo "[10-config] OK — handing off to steel service"
 
 # Re-enable -e so a fatal misconfig below this line still fails the
